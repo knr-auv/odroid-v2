@@ -22,7 +22,7 @@ PAD_PORT = 8181
 
 RUN_FORWARD_VALUE = 400.
 
-from PID import PID
+from .PID import PID
 
 # horizontal left / right, vertical left/mid/right
 motors_names = ['hl', 'hr', 'vl', 'vm', 'vr']   # should be connected in this order to pwm outputs 0, 1, 2,...

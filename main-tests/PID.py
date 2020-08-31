@@ -1,13 +1,15 @@
-import time
+import time, threading
 
 
 class PID:
 
-    def __init__(self, P=0., I=0., D=0., set_point = 0, sample_time = 0.01):
+    def __init__(self, P=0., I=0., D=0., set_point = 0, sample_time = 0.001):
 
         self.Kp = P
         self.Ki = I
         self.Kd = D
+        self.lock = threading.Lock()
+        self.memory = [self.Kp, self.Ki, self.Kd]
 
         self.set_point = set_point
 
@@ -29,41 +31,37 @@ class PID:
 
         self.max_output = 0
 
+
+
     def update(self, feedback):
 
         error = self.set_point - feedback
-
+      #po co sprawdza� czas skoro p�tla ma okre�lon� cz�stotliwo��?
         self.current_time = time.time()
 
         delta_time = self.current_time - self.last_time
         delta_error = error - self.last_error
-
-        if (delta_time >= self.sample_time):
-
-            self.PTerm = error
-            self.ITerm += error * delta_time
-
-            if (self.ITerm > self.windup_guard):
-                self.ITerm = self.windup_guard
-            elif (self.ITerm < -self.windup_guard):
-                self.ITerm = -self.windup_guard
-
-            self.DTerm = delta_error / delta_time
-
-            #save last data for next calculation
-            self.last_time = self.current_time
-            self.last_error = error
-
-            self.output = self.Kp * self.PTerm + self.Ki * self.ITerm + self.Kd * self.DTerm
-
-            # na testy, zeby predkosc sie nie zwiekszyla za bardzo
-            if self.output > self.max_output:
-                self.output = self.max_output
-
-            return self.output
-
+        self.PTerm = error
+        self.ITerm += error * delta_time
+        if (self.ITerm > self.windup_guard):
+            self.ITerm = self.windup_guard
+        elif (self.ITerm < -self.windup_guard):
+            self.ITerm = -self.windup_guard
+        if(delta_time ==0):
+            self.DTerm = 0
         else:
-            return 0  #self.output_prev
+            self.DTerm = delta_error / delta_time
+        #save last data for next calculation
+        self.last_time = self.current_time
+        self.last_error = error
+        with self.lock:
+            self.output = self.Kp * self.PTerm + self.Ki * self.ITerm + self.Kd * self.DTerm
+        # na testy, zeby predkosc sie nie zwiekszyla za bardzo
+        if self.output > self.max_output:
+            self.output = self.max_output
+
+        return self.output
+
 
     def setKp(self, Kp):
         self.Kp = Kp
@@ -87,7 +85,7 @@ class PID:
         print(Kp, Ki, Kd)
 
     def getPIDCoefficients(self):
-        return self.Kp, self.Ki, self.Kd
+        return [self.Kp, self.Ki, self.Kd]
 
     def setMaxOutput(self, max_output):
         self.max_output = max_output
@@ -103,3 +101,15 @@ class PID:
 
     def getSetPoint(self):
         return self.set_point
+
+    def turn_off(self):
+        self.Kp = 0
+        self.Ki = 0
+        self.Kd = 0
+        self.memory = [self.Kp, self.Ki, self.Kd]
+
+    def turn_on(self):
+        self.Kp = self.memory[0]
+        self.Ki = self.memory[1]
+        self.Kd = self.memory[2]
+
