@@ -1,19 +1,20 @@
-import socket, struct, threading, logging, sys
+import json
+import logging
+import socket
+import struct
+import time
+import threading
 
 from concurrent.futures import ThreadPoolExecutor
 from odroid_sender import OdroidSender
 from odroid_parser import OdroidParser
-
-
-
+from variable import *
 
 
 class OdroidClient(threading.Thread, OdroidParser, OdroidSender):
-    def __init__(self, addr, protocol):
+    def __init__(self, protocol, addr=JETSON_ADDRESS):
         threading.Thread.__init__(self)
-        self.socket=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect(addr)
-        OdroidSender.__init__(self, socket, protocol)
+        OdroidSender.__init__(self, protocol)
         self.protocol = protocol
         self.host = addr[0]
         self.port = addr[1]
@@ -38,69 +39,72 @@ class OdroidClient(threading.Thread, OdroidParser, OdroidSender):
 
     def stopAutonomy(self):
         self.sendControl([self.protocol["CONTROL_SPEC"]["STOP_AUTONOMY"]])
+
     def setMode(self, mode):
         self.sendControl([self.protocol["CONTROL_SPEC"]["MODE"], mode])
 
-
     def client(self):
-        logging.debug(("Connecting to: "+ str(self.host)+":"+str(self.port)))
         try:
-            logging.debug("Connecting...")
-            # reader, self.writer = await asyncio.open_connection(host = self.host, port = self.port, family = socket.AF_INET, flags = socket.SOCK_STREAM)
+            logging.debug(("Connecting to: "+ str(self.host)+":"+str(self.port)))
+            self.socket=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.connect((self.host,self.port))
         except (socket.gaierror,socket.error):
             logging.debug("Connection refused")
             return
         logging.debug("Socket now Connect with port:{}".format(self.port))
         executor = ThreadPoolExecutor(max_workers=5)
-        HEADER = 0
-        DATA = 1
-        rx_state = HEADER
-        rx_len =0
+        rx_state = FRAME_SECTION["HEADER"]
+        rx_len = 0
         self.start_telemetry(30)
 
         self.sendBoatDataRequest()
         self.sendPIDRequest("all")
-        try:
-            while self.active:
-                try:
-                    if(rx_state ==HEADER):
-                        async def receive4():
-                            data = await reader.readexactly(4)
-                            return data
-                        self.reader_task = asyncio.create_task(receive4())
-                        data = await self.reader_task
-                        rx_len = struct.unpack("<L",data)[0]
-                        rx_len -= 4
-                        rx_state = DATA
+        while self.active:
+            try:
+                if(rx_state==FRAME_SECTION["HEADER"]):
+                    data=self.socket.recv(4)
+                    if data == b'':
+                        raise ConnectionResetError
+                    rx_len=struct.unpack("<I",data)[0]
+                    rx_len-=4
+                    rx_state=FRAME_SECTION["DATA"]
 
-                    elif(rx_state == DATA):
-                        data = await reader.readexactly(rx_len)
-                        executor.submit(self.parse ,data)
-                        rx_state = HEADER
-                except asyncio.IncompleteReadError:
-                    rx_state = HEADER
-                except asyncio.CancelledError:
-                    pass
-        except (socket.gaierror, socket.error):
-            executor.shutdown()
-            self.reader_task.cancel()
-            logging.debug("Connection terminated")
-            return
+                elif(rx_state==FRAME_SECTION["DATA"]):
+                    data=self.socket.recv(rx_len).decode("ascii")
+                    logging.debug(data)
+                    self.executor.submit(self.parse ,data)
+                    rx_state=FRAME_SECTION["HEADER"]
+            except ConnectionResetError:
+                self.clientConnected = False
+                self.socket.close()
+                print("Disconnected from server.")
+                return
+            except socket.gaierror:
+                executor.shutdown()
+                logging.debug("Connection terminated")
+                return
+            except Exception as e:
+                logging.debug("Exception")
+                rx_state=FRAME_SECTION["HEADER"]
+
         executor.shutdown()
-        self.writer.close()
+        self.socket.close()
         logging.debug("Connection terminated")
-        self.signals.connectionButton.emit("Connect")
-        self.signals.connectionTerminated.emit()
 
     def run(self):
         self.client()
 
     def stop(self):
-        async def coro():
-            self.reader_task.cancel()
-        self.active = False
-        try:
-            if self.client_loop.is_running():
-                asyncio.run_coroutine_threadsafe(coro(), self.client_loop)
-        except AttributeError:
-            pass
+        logging.debug(f"Closing client connection on {self.host}:{self.port}")
+        self.active= False
+        self.socket.close()
+
+if __name__=="__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    addr = ("localhost", 1234)
+    with open("protocol.json",'r') as p:
+        protocol = json.load(p)
+    client=OdroidClient(protocol,addr)
+    client.start()
+    while True:
+            time.sleep(1)
