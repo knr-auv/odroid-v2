@@ -1,6 +1,5 @@
 #this thread is handling odroid/stm task it is controlled by jetson_simulation
-import threading
-import logging
+import threading, logging
 import time, random
 from .PID import PID
 
